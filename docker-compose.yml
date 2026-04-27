@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+
+  # ── Backend Service ──────────────────────────
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: resumeiq-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - MONGO_URI=${MONGO_URI}
+      - GOOGLE_GENAI_API_KEY=${GOOGLE_GENAI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+    restart: unless-stopped
+
+  # ── Frontend Service ─────────────────────────
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+    container_name: resumeiq-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
