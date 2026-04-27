@@ -14,9 +14,14 @@ export const useAuth = () => {
         setLoading(true)
         try {
             const data = await login({ email, password })
-            setUser(data.user)
+            if (data?.user) {
+                setUser(data.user)
+                return { success: true }
+            }
+            return { success: false, message: "Login failed" }
         } catch (err) {
-
+            console.error("Login failed:", err)
+            return { success: false, message: err?.response?.data?.message || "Login failed" }
         } finally {
             setLoading(false)
         }
@@ -26,9 +31,14 @@ export const useAuth = () => {
         setLoading(true)
         try {
             const data = await register({ username, email, password })
-            setUser(data.user)
+            if (data?.user) {
+                setUser(data.user)
+                return { success: true }
+            }
+            return { success: false, message: "Registration failed" }
         } catch (err) {
-
+            console.error("Register failed:", err)
+            return { success: false, message: err?.response?.data?.message || "Registration failed" }
         } finally {
             setLoading(false)
         }
@@ -37,11 +47,12 @@ export const useAuth = () => {
     const handleLogout = async () => {
         setLoading(true)
         try {
-            const data = await logout()
-            setUser(null)
+            await logout()
         } catch (err) {
-
+            console.error("Logout error:", err)
         } finally {
+            localStorage.removeItem('token')
+            setUser(null)
             setLoading(false)
         }
     }
@@ -49,11 +60,20 @@ export const useAuth = () => {
     useEffect(() => {
 
         const getAndSetUser = async () => {
+            const token = localStorage.getItem('token')
+            if (!token) {
+                setLoading(false)
+                return
+            }
             try {
-
                 const data = await getMe()
-                setUser(data.user)
-            } catch (err) { } finally {
+                if (data?.user) {
+                    setUser(data.user)
+                }
+            } catch (err) {
+                console.error("GetMe failed:", err)
+                localStorage.removeItem('token')
+            } finally {
                 setLoading(false)
             }
         }
