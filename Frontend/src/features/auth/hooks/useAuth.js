@@ -65,6 +65,7 @@ export const useAuth = () => {
                 setLoading(false)
                 return
             }
+            setLoading(true)  // only show loading when we have a token to validate
             try {
                 const data = await getMe()
                 if (data?.user) {
