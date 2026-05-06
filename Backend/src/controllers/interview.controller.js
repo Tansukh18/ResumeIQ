@@ -12,18 +12,15 @@ async function generateInterViewReportController(req, res) {
 
     const { selfDescription, jobDescription } = req.body
 
-    // Parse PDF resume if uploaded, otherwise fall back to empty string
-    let resumeText = ""
-    if (req.file && req.file.buffer) {
+    // Parse PDF if uploaded, otherwise fall back to selfDescription
+    let resumeText = selfDescription || ""
+    if (req.file) {
         const resumeContent = await (new pdfParse.PDFParse(Uint8Array.from(req.file.buffer))).getText()
-        resumeText = resumeContent.text || ""
+        resumeText = resumeContent.text
     }
 
-    // Require at least one of: resume or selfDescription
     if (!resumeText && !selfDescription) {
-        return res.status(400).json({
-            message: "Please provide either a resume PDF or a self description."
-        })
+        return res.status(400).json({ message: "Please provide a resume PDF or a self description." })
     }
 
     const interViewReportByAi = await generateInterviewReport({
