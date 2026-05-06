@@ -34,24 +34,36 @@ const interviewReportSchema = z.object({
 
 async function generateInterviewReport({ resume, selfDescription, jobDescription }) {
 
-
     const prompt = `Generate an interview report for a candidate with the following details:
                         Resume: ${resume}
                         Self Description: ${selfDescription}
                         Job Description: ${jobDescription}
 `
 
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: zodToJsonSchema(interviewReportSchema),
+    const generateWithRetry = async (retries = 3) => {
+        for (let i = 0; i < retries; i++) {
+            try {
+                // Use gemini-2.5-flash normally, but fallback to gemini-2.0-flash if retries fail
+                const modelToUse = i >= retries - 1 ? "gemini-2.0-flash" : "gemini-2.5-flash";
+                const response = await ai.models.generateContent({
+                    model: modelToUse,
+                    contents: prompt,
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: zodToJsonSchema(interviewReportSchema),
+                    }
+                })
+                return JSON.parse(response.text)
+            } catch (err) {
+                console.error(`[AI Gen] Attempt ${i + 1} failed with model ${i >= retries - 1 ? "gemini-2.0-flash" : "gemini-2.5-flash"}:`, err.message);
+                if (i === retries - 1) throw err;
+                // Wait 2 to 4 seconds before retrying to let demand spike pass
+                await new Promise(res => setTimeout(res, 2000 + Math.random() * 2000));
+            }
         }
-    })
+    }
 
-    return JSON.parse(response.text)
-
+    return await generateWithRetry()
 
 }
 

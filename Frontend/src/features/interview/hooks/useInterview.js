@@ -21,13 +21,14 @@ export const useInterview = () => {
         try {
             response = await generateInterviewReport({ jobDescription, selfDescription, resumeFile })
             setReport(response.interviewReport)
+            return response.interviewReport
         } catch (error) {
-            console.log(error)
+            console.error("Report generation failed:", error)
+            alert(error.response?.data?.message || "Failed to generate report. The AI server might be experiencing high demand. Please try again in a few seconds.")
+            return null
         } finally {
             setLoading(false)
         }
-
-        return response.interviewReport
     }
 
     const getReportById = async (interviewId) => {
