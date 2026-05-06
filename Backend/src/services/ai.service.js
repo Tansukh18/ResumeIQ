@@ -1,8 +1,7 @@
 const { GoogleGenAI } = require("@google/genai")
 const { z } = require("zod")
 const { zodToJsonSchema } = require("zod-to-json-schema")
-const puppeteer = require("puppeteer-core")
-const chromium = require("@sparticuz/chromium")
+const PDFDocument = require("pdfkit")
 
 const ai = new GoogleGenAI({
     apiKey: process.env.GOOGLE_GENAI_API_KEY
@@ -58,67 +57,120 @@ async function generateInterviewReport({ resume, selfDescription, jobDescription
 
 
 
-async function generatePdfFromHtml(htmlContent) {
-    const browser = await puppeteer.launch({
-        args: chromium.args,
-        defaultViewport: chromium.defaultViewport,
-        executablePath: await chromium.executablePath(),
-        headless: chromium.headless,
-    })
-    const page = await browser.newPage()
-    await page.setContent(htmlContent, { waitUntil: "networkidle0" })
 
-    const pdfBuffer = await page.pdf({
-        format: "A4",
-        margin: {
-            top: "20mm",
-            bottom: "20mm",
-            left: "15mm",
-            right: "15mm"
+function generatePdfFromData({ report, selfDescription }) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ margin: 50, size: "A4" })
+        const buffers = []
+        doc.on("data", chunk => buffers.push(chunk))
+        doc.on("end", () => resolve(Buffer.concat(buffers)))
+        doc.on("error", reject)
+
+        const primaryColor = "#1a56db"
+        const darkText = "#1e293b"
+        const mutedText = "#64748b"
+        const lightLine = "#e2e8f0"
+
+        // Header
+        doc.fontSize(24).fillColor(primaryColor).font("Helvetica-Bold")
+           .text(report.title || "Professional Resume", { align: "center" })
+        doc.moveDown(0.3)
+
+        if (selfDescription) {
+            doc.fontSize(10).fillColor(mutedText).font("Helvetica")
+               .text(selfDescription.slice(0, 200), { align: "center" })
         }
+
+        doc.moveDown(0.5)
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(primaryColor).lineWidth(2).stroke()
+        doc.moveDown(0.6)
+
+        // Match score
+        const bannerY = doc.y
+        doc.rect(50, bannerY, 495, 26).fill("#e8f0fe")
+        doc.fillColor(primaryColor).fontSize(10).font("Helvetica-Bold")
+           .text(`ATS Match Score: ${report.matchScore || "N/A"}%   |   Role: ${(report.title || "Target Role").slice(0, 60)}`,
+                 60, bannerY + 7, { lineBreak: false })
+        doc.moveDown(1.4)
+
+        const sectionHeader = (title) => {
+            doc.fillColor(primaryColor).fontSize(12).font("Helvetica-Bold").text(title.toUpperCase())
+            doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(lightLine).lineWidth(1).stroke()
+            doc.moveDown(0.4)
+        }
+
+        // Professional Summary
+        sectionHeader("Professional Summary")
+        const summary = selfDescription ||
+            `Motivated professional targeting a ${report.title} position with strong technical and analytical skills.`
+        doc.fillColor(darkText).fontSize(10).font("Helvetica").text(summary, { lineGap: 3 })
+        doc.moveDown(0.8)
+
+        // Skills
+        if (report.skillGaps && report.skillGaps.length > 0) {
+            sectionHeader("Key Skills")
+            const skills = report.skillGaps.map(sg => {
+                if (typeof sg === "object") return sg.skill || sg.area || sg.name || Object.values(sg)[0] || ""
+                return String(sg)
+            }).filter(Boolean)
+            const half = Math.ceil(skills.length / 2)
+            const col1 = skills.slice(0, half)
+            const col2 = skills.slice(half)
+            const startY = doc.y
+            col1.forEach((skill, i) => {
+                doc.fillColor(darkText).fontSize(10).font("Helvetica")
+                   .text(`• ${skill}`, 50, startY + i * 16, { width: 230 })
+            })
+            col2.forEach((skill, i) => {
+                doc.fillColor(darkText).fontSize(10).font("Helvetica")
+                   .text(`• ${skill}`, 290, startY + i * 16, { width: 255 })
+            })
+            doc.y = startY + Math.max(col1.length, col2.length) * 16 + 6
+            doc.moveDown(0.8)
+        }
+
+        // Technical Competencies
+        if (report.technicalQuestions && report.technicalQuestions.length > 0) {
+            sectionHeader("Technical Competency Areas")
+            report.technicalQuestions.slice(0, 5).forEach(q => {
+                const topic = typeof q === "object" ? (q.topic || q.question || q.area || JSON.stringify(q).slice(0, 80)) : String(q)
+                doc.fillColor(darkText).fontSize(10).font("Helvetica")
+                   .text(`▸  ${topic.slice(0, 100)}`, { lineGap: 2 })
+            })
+            doc.moveDown(0.8)
+        }
+
+        // Preparation Plan
+        if (report.preparationPlan && report.preparationPlan.length > 0) {
+            sectionHeader("Preparation & Growth Plan")
+            report.preparationPlan.slice(0, 5).forEach((day, idx) => {
+                const label = typeof day === "object" ? (day.day || day.title || `Phase ${idx + 1}`) : `Phase ${idx + 1}`
+                const detail = typeof day === "object" ? (Array.isArray(day.tasks) ? day.tasks.join(", ") : day.focus || day.description || "") : String(day)
+                doc.fillColor(primaryColor).fontSize(10).font("Helvetica-Bold").text(label, { continued: !!detail })
+                if (detail) doc.fillColor(darkText).font("Helvetica").text(` — ${detail.slice(0, 120)}`)
+                else doc.text("")
+                doc.moveDown(0.2)
+            })
+        }
+
+        // Footer
+        doc.moveDown(1)
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(lightLine).lineWidth(1).stroke()
+        doc.moveDown(0.4)
+        doc.fillColor(mutedText).fontSize(9).font("Helvetica")
+           .text("Generated by ResumeIQ • resume-iq-oci5.vercel.app", { align: "center" })
+
+        doc.end()
     })
-
-    await browser.close()
-
-    return pdfBuffer
 }
 
 
-async function generateResumePdf({ resume, selfDescription, jobDescription }) {
-
-    const resumePdfSchema = z.object({
-        html: z.string().describe("The HTML content of the resume which can be converted to PDF using any library like puppeteer")
+async function generateResumePdf({ resume, selfDescription, jobDescription }, interviewReport) {
+    const pdfBuffer = await generatePdfFromData({
+        report: interviewReport,
+        selfDescription: selfDescription || resume || ""
     })
-
-    const prompt = `Generate resume for a candidate with the following details:
-                        Resume: ${resume}
-                        Self Description: ${selfDescription}
-                        Job Description: ${jobDescription}
-
-                        the response should be a JSON object with a single field "html" which contains the HTML content of the resume which can be converted to PDF using any library like puppeteer.
-                        The resume should be tailored for the given job description and should highlight the candidate's strengths and relevant experience. The HTML content should be well-formatted and structured, making it easy to read and visually appealing.
-                        The content of resume should be not sound like it's generated by AI and should be as close as possible to a real human-written resume.
-                        you can highlight the content using some colors or different font styles but the overall design should be simple and professional.
-                        The content should be ATS friendly, i.e. it should be easily parsable by ATS systems without losing important information.
-                        The resume should not be so lengthy, it should ideally be 1-2 pages long when converted to PDF. Focus on quality rather than quantity and make sure to include all the relevant information that can increase the candidate's chances of getting an interview call for the given job description.
-                    `
-
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: zodToJsonSchema(resumePdfSchema),
-        }
-    })
-
-
-    const jsonContent = JSON.parse(response.text)
-
-    const pdfBuffer = await generatePdfFromHtml(jsonContent.html)
-
     return pdfBuffer
-
 }
 
 module.exports = { generateInterviewReport, generateResumePdf }
