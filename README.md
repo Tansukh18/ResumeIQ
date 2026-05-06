@@ -49,36 +49,49 @@ ResumeIQ is a full-stack, AI-driven application designed to help job seekers ins
 
 ## 🏗️ System Architecture & Data Flow
 
+### **1. Presentation Layer (Frontend)**
+- **React 19 & Vite:** Delivers a lightning-fast, Single Page Application (SPA) experience.
+- **TailwindCSS:** Provides responsive, mobile-first styling and glassmorphism UI components.
+- **Vercel Edge Network:** Hosts the compiled frontend globally for low-latency loading.
+
+### **2. Application Layer (Backend)**
+- **Express.js (Node.js):** REST API handling all business logic, protected by CORS and JWT middleware.
+- **Auth Service:** Issues encrypted JWT tokens and manages session states.
+- **Parsing Service (`pdf-parse`):** Extracts raw text from uploaded user PDFs.
+- **PDF Engine (`pdfkit`):** Dynamically draws and builds rigid, ATS-friendly PDF templates via stream buffers.
+- **Render.com:** Hosts the backend on a managed cloud container.
+
+### **3. Intelligence Layer (AI Agent)**
+- **Groq API:** Handles the heavy NLP lifting.
+- **Routing Logic:** Automatically routes requests to `llama-3.3-70b-versatile` (primary) and falls back to `llama3-8b-8192` if rate limits are exceeded.
+- **Zod Schema:** Enforces strict JSON data shapes so the AI never returns malformed markdown.
+
+### **4. Data Layer (Database)**
+- **MongoDB Atlas:** Cloud NoSQL database storing user profiles, raw resumes, and the structured AI-generated interview reports.
+
+### **Flowchart**
+
 ```mermaid
-graph TD
-    %% Define styles
-    classDef frontend fill:#3b82f6,stroke:#1e3a8a,stroke-width:2px,color:#fff,font-weight:bold
-    classDef backend fill:#10b981,stroke:#064e3b,stroke-width:2px,color:#fff,font-weight:bold
-    classDef ai fill:#f59e0b,stroke:#78350f,stroke-width:2px,color:#fff,font-weight:bold
-    classDef db fill:#6366f1,stroke:#312e81,stroke-width:2px,color:#fff,font-weight:bold
-    classDef user fill:#ef4444,stroke:#7f1d1d,stroke-width:2px,color:#fff,font-weight:bold
+sequenceDiagram
+    participant U as User (Browser)
+    participant F as React Frontend
+    participant B as Express Backend
+    participant AI as Groq API
+    participant DB as MongoDB Atlas
 
-    %% Nodes
-    User[👤 User]:::user
-    UI[🖥️ React Frontend (Vercel)]:::frontend
-    API[⚙️ Express Backend (Render)]:::backend
-    DB[(🗄️ MongoDB Atlas)]:::db
-    Groq[🧠 Groq AI API (Llama 3.3)]:::ai
-
-    %% Flow
-    User -- Uploads PDF Resume \n& Pastes JD --> UI
-    UI -- Sends FormData \n(Auth Token + File) --> API
-    API -- "1. pdf-parse extracts text \n2. Express Auth Middleware" --> API
-    API -- Prompt + Zod Schema --> Groq
-    Groq -- Returns strictly formatted JSON --> API
-    API -- Saves Report Data --> DB
-    API -- Returns JSON Response --> UI
-    UI -- Renders Interview Dashboard --> User
+    U->>F: Upload Resume PDF & Paste JD
+    F->>B: POST /api/interview (Form Data)
+    B->>B: pdf-parse extracts text
+    B->>AI: Send Prompt + JSON Schema
+    AI-->>B: Return structured JSON evaluation
+    B->>DB: Save Report Data
+    B-->>F: Return Interview Report
+    F-->>U: Display Dashboard & Study Plan
     
-    User -- Clicks "Download ATS Resume" --> UI
-    UI -- GET Request --> API
-    API -- Uses pdfkit to build PDF --> API
-    API -- Streams PDF buffer --> UI
+    U->>F: Click "Download ATS Resume"
+    F->>B: GET /api/interview/download
+    B->>B: pdfkit draws ATS-friendly format
+    B-->>U: Stream PDF File
 ```
 
 ---
