@@ -1,12 +1,12 @@
-const { GoogleGenAI } = require("@google/genai")
 const { z } = require("zod")
 const { zodToJsonSchema } = require("zod-to-json-schema")
 const PDFDocument = require("pdfkit")
+const Groq = require("groq-sdk")
 
-const ai = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_GENAI_API_KEY
+// Initialize Groq from environment variables
+const groq = new Groq({
+    apiKey: process.env.GROQ_API_KEY
 })
-
 
 const interviewReportSchema = z.object({
     matchScore: z.number().describe("A score between 0 and 100 indicating how well the candidate's profile matches the job describe"),
@@ -33,38 +33,36 @@ const interviewReportSchema = z.object({
 })
 
 async function generateInterviewReport({ resume, selfDescription, jobDescription }) {
+    // Generate JSON schema string to instruct Groq
+    const schemaStr = JSON.stringify(zodToJsonSchema(interviewReportSchema), null, 2);
 
-    const prompt = `Generate an interview report for a candidate with the following details:
-                        Resume: ${resume}
-                        Self Description: ${selfDescription}
-                        Job Description: ${jobDescription}
-`
+    const systemPrompt = `You are an expert technical recruiter and AI interviewer.
+You must output a valid JSON object that exactly matches the following JSON schema:
+${schemaStr}
 
-    const generateWithRetry = async (retries = 3) => {
-        for (let i = 0; i < retries; i++) {
-            try {
-                // Use gemini-2.5-flash normally, but fallback to gemini-2.0-flash if retries fail
-                const modelToUse = i >= retries - 1 ? "gemini-2.0-flash" : "gemini-2.5-flash";
-                const response = await ai.models.generateContent({
-                    model: modelToUse,
-                    contents: prompt,
-                    config: {
-                        responseMimeType: "application/json",
-                        responseSchema: zodToJsonSchema(interviewReportSchema),
-                    }
-                })
-                return JSON.parse(response.text)
-            } catch (err) {
-                console.error(`[AI Gen] Attempt ${i + 1} failed with model ${i >= retries - 1 ? "gemini-2.0-flash" : "gemini-2.5-flash"}:`, err.message);
-                if (i === retries - 1) throw err;
-                // Wait 2 to 4 seconds before retrying to let demand spike pass
-                await new Promise(res => setTimeout(res, 2000 + Math.random() * 2000));
-            }
-        }
+Return ONLY valid JSON. Do not return any markdown formatting or extra text.`;
+
+    const userPrompt = `Generate an interview report for a candidate with the following details:
+Resume: ${resume}
+Self Description: ${selfDescription}
+Job Description: ${jobDescription}`;
+
+    try {
+        const response = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt }
+            ],
+            model: "llama-3.3-70b-versatile",
+            temperature: 0.5,
+            response_format: { type: "json_object" }
+        });
+
+        return JSON.parse(response.choices[0].message.content);
+    } catch (err) {
+        console.error("[AI Gen] Groq request failed:", err.message);
+        throw err;
     }
-
-    return await generateWithRetry()
-
 }
 
 
