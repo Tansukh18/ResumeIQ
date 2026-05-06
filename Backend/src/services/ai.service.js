@@ -58,117 +58,227 @@ async function generateInterviewReport({ resume, selfDescription, jobDescription
 
 
 
-function generatePdfFromData({ report, selfDescription }) {
-    return new Promise((resolve, reject) => {
-        const doc = new PDFDocument({ margin: 50, size: "A4" })
-        const buffers = []
-        doc.on("data", chunk => buffers.push(chunk))
-        doc.on("end", () => resolve(Buffer.concat(buffers)))
-        doc.on("error", reject)
 
-        const primaryColor = "#1a56db"
-        const darkText = "#1e293b"
-        const mutedText = "#64748b"
-        const lightLine = "#e2e8f0"
+// ─── RESUME TEXT PARSER ───────────────────────────────────────────────────────
+function parseResumeText(rawText) {
+    const text = rawText.replace(/-- \d+ of \d+ --/g, '').replace(/\r/g, '').trim()
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+    if (lines.length < 2) return null
 
-        // Header
-        doc.fontSize(24).fillColor(primaryColor).font("Helvetica-Bold")
-           .text(report.title || "Professional Resume", { align: "center" })
-        doc.moveDown(0.3)
+    const name = lines[0]
 
-        if (selfDescription) {
-            doc.fontSize(10).fillColor(mutedText).font("Helvetica")
-               .text(selfDescription.slice(0, 200), { align: "center" })
+    // Contact line: has pipe | or @ or phone pattern
+    const contactIdx = lines.findIndex((l, i) => i > 0 && i < 5 &&
+        (l.includes('@') || l.includes('|') || /\+\d{2}/.test(l)))
+    const contact = contactIdx >= 0 ? lines[contactIdx] : ''
+
+    const SECTION_MAP = {
+        'PROFESSIONAL SUMMARY': 'summary', 'SUMMARY': 'summary', 'OBJECTIVE': 'summary',
+        'KEY SKILLS': 'skills', 'SKILLS': 'skills', 'TECHNICAL SKILLS': 'skills', 'CORE COMPETENCIES': 'skills',
+        'PROFESSIONAL EXPERIENCE': 'experience', 'EXPERIENCE': 'experience', 'WORK EXPERIENCE': 'experience',
+        'PROJECTS': 'projects', 'PROJECT EXPERIENCE': 'projects',
+        'EDUCATION': 'education',
+        'CERTIFICATIONS': 'certifications', 'CERTIFICATES': 'certifications',
+        'ACHIEVEMENTS': 'achievements', 'AWARDS': 'achievements',
+    }
+
+    const sections = {}
+    let currentKey = null
+    const startIdx = contactIdx >= 0 ? contactIdx + 1 : 2
+
+    for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i]
+        const upper = line.toUpperCase().trim()
+        const matched = Object.keys(SECTION_MAP).find(h => upper === h)
+        if (matched) {
+            currentKey = SECTION_MAP[matched]
+            if (!sections[currentKey]) sections[currentKey] = []
+        } else if (currentKey) {
+            sections[currentKey].push(line)
         }
+    }
 
+    return { name, contact, sections }
+}
+
+// ─── PDFKIT RENDERER — ATS-FRIENDLY FORMAT ───────────────────────────────────
+function renderResumePdf(doc, { name, contact, sections }) {
+    const C = {
+        name: '#0f172a', accent: '#1d4ed8', text: '#1e293b',
+        muted: '#475569', line: '#cbd5e1'
+    }
+    const PW = 495 // page content width (595 - 50*2 margins)
+
+    // ── NAME
+    doc.fontSize(22).fillColor(C.name).font('Helvetica-Bold')
+       .text(name, { align: 'center' })
+
+    // ── CONTACT
+    if (contact) {
+        doc.moveDown(0.2)
+        doc.fontSize(9.5).fillColor(C.muted).font('Helvetica')
+           .text(contact, { align: 'center' })
+    }
+
+    doc.moveDown(0.4)
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(C.accent).lineWidth(1.5).stroke()
+    doc.moveDown(0.5)
+
+    // ── Section header helper
+    const secHeader = (title) => {
+        doc.fillColor(C.accent).fontSize(11).font('Helvetica-Bold').text(title)
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(C.line).lineWidth(0.7).stroke()
+        doc.moveDown(0.35)
+    }
+
+    // ── Bullet helper — single text run so ATS scanners read it cleanly
+    const bullet = (text) => {
+        doc.fillColor(C.text).fontSize(9.5).font('Helvetica')
+           .text('\u2022  ' + text, { lineGap: 1.5, align: 'justify', indent: 14 })
+        doc.moveDown(0.1)
+    }
+
+    // ── PROFESSIONAL SUMMARY
+    if (sections.summary && sections.summary.length > 0) {
+        secHeader('PROFESSIONAL SUMMARY')
+        const para = sections.summary.join(' ').replace(/\s+/g, ' ').trim()
+        doc.fillColor(C.text).fontSize(9.5).font('Helvetica')
+           .text(para, { lineGap: 2, align: 'justify' })
+        doc.moveDown(0.7)
+    }
+
+    // ── KEY SKILLS
+    if (sections.skills && sections.skills.length > 0) {
+        secHeader('KEY SKILLS')
+        sections.skills.forEach(line => {
+            const colonIdx = line.indexOf(':')
+            if (colonIdx > 0) {
+                const cat = line.slice(0, colonIdx).trim()
+                const vals = line.slice(colonIdx + 1).replace(/^\t+/, '').trim()
+                // Render as single line: bold category then normal values
+                doc.fillColor(C.text).fontSize(9.5).font('Helvetica-Bold')
+                   .text(cat + ':  ', { continued: true })
+                doc.font('Helvetica').text(vals, { lineGap: 1 })
+            } else {
+                doc.fillColor(C.text).fontSize(9.5).font('Helvetica').text(line, { lineGap: 1 })
+            }
+            doc.moveDown(0.12)
+        })
         doc.moveDown(0.5)
-        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(primaryColor).lineWidth(2).stroke()
-        doc.moveDown(0.6)
+    }
 
-        // Match score
-        const bannerY = doc.y
-        doc.rect(50, bannerY, 495, 26).fill("#e8f0fe")
-        doc.fillColor(primaryColor).fontSize(10).font("Helvetica-Bold")
-           .text(`ATS Match Score: ${report.matchScore || "N/A"}%   |   Role: ${(report.title || "Target Role").slice(0, 60)}`,
-                 60, bannerY + 7, { lineBreak: false })
-        doc.moveDown(1.4)
-
-        const sectionHeader = (title) => {
-            doc.fillColor(primaryColor).fontSize(12).font("Helvetica-Bold").text(title.toUpperCase())
-            doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(lightLine).lineWidth(1).stroke()
-            doc.moveDown(0.4)
-        }
-
-        // Professional Summary
-        sectionHeader("Professional Summary")
-        const summary = selfDescription ||
-            `Motivated professional targeting a ${report.title} position with strong technical and analytical skills.`
-        doc.fillColor(darkText).fontSize(10).font("Helvetica").text(summary, { lineGap: 3 })
-        doc.moveDown(0.8)
-
-        // Skills
-        if (report.skillGaps && report.skillGaps.length > 0) {
-            sectionHeader("Key Skills")
-            const skills = report.skillGaps.map(sg => {
-                if (typeof sg === "object") return sg.skill || sg.area || sg.name || Object.values(sg)[0] || ""
-                return String(sg)
-            }).filter(Boolean)
-            const half = Math.ceil(skills.length / 2)
-            const col1 = skills.slice(0, half)
-            const col2 = skills.slice(half)
-            const startY = doc.y
-            col1.forEach((skill, i) => {
-                doc.fillColor(darkText).fontSize(10).font("Helvetica")
-                   .text(`• ${skill}`, 50, startY + i * 16, { width: 230 })
-            })
-            col2.forEach((skill, i) => {
-                doc.fillColor(darkText).fontSize(10).font("Helvetica")
-                   .text(`• ${skill}`, 290, startY + i * 16, { width: 255 })
-            })
-            doc.y = startY + Math.max(col1.length, col2.length) * 16 + 6
-            doc.moveDown(0.8)
-        }
-
-        // Technical Competencies
-        if (report.technicalQuestions && report.technicalQuestions.length > 0) {
-            sectionHeader("Technical Competency Areas")
-            report.technicalQuestions.slice(0, 5).forEach(q => {
-                const topic = typeof q === "object" ? (q.topic || q.question || q.area || JSON.stringify(q).slice(0, 80)) : String(q)
-                doc.fillColor(darkText).fontSize(10).font("Helvetica")
-                   .text(`▸  ${topic.slice(0, 100)}`, { lineGap: 2 })
-            })
-            doc.moveDown(0.8)
-        }
-
-        // Preparation Plan
-        if (report.preparationPlan && report.preparationPlan.length > 0) {
-            sectionHeader("Preparation & Growth Plan")
-            report.preparationPlan.slice(0, 5).forEach((day, idx) => {
-                const label = typeof day === "object" ? (day.day || day.title || `Phase ${idx + 1}`) : `Phase ${idx + 1}`
-                const detail = typeof day === "object" ? (Array.isArray(day.tasks) ? day.tasks.join(", ") : day.focus || day.description || "") : String(day)
-                doc.fillColor(primaryColor).fontSize(10).font("Helvetica-Bold").text(label, { continued: !!detail })
-                if (detail) doc.fillColor(darkText).font("Helvetica").text(` — ${detail.slice(0, 120)}`)
-                else doc.text("")
+    // ── PROFESSIONAL EXPERIENCE
+    if (sections.experience && sections.experience.length > 0) {
+        secHeader('PROFESSIONAL EXPERIENCE')
+        sections.experience.forEach(line => {
+            const isBullet = /^[●•\-\u2013\*]/.test(line)
+            const isCompanyDate = line.includes('|') && /20\d\d|19\d\d/.test(line)
+            if (isBullet) {
+                bullet(line.replace(/^[●•\-\u2013\*]\s*/, ''))
+            } else if (isCompanyDate) {
+                doc.fillColor(C.muted).fontSize(9).font('Helvetica').text(line)
                 doc.moveDown(0.2)
-            })
-        }
+            } else {
+                doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
+            }
+        })
+        doc.moveDown(0.6)
+    }
 
-        // Footer
-        doc.moveDown(1)
-        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(lightLine).lineWidth(1).stroke()
-        doc.moveDown(0.4)
-        doc.fillColor(mutedText).fontSize(9).font("Helvetica")
-           .text("Generated by ResumeIQ • resume-iq-oci5.vercel.app", { align: "center" })
+    // ── PROJECTS
+    if (sections.projects && sections.projects.length > 0) {
+        secHeader('PROJECTS')
+        sections.projects.forEach(line => {
+            const isBullet = /^[●•\-\u2013\*]/.test(line)
+            const isDateUrl = /20\d\d|19\d\d/.test(line) && (line.includes('|') || line.includes('.'))
+            if (isBullet) {
+                bullet(line.replace(/^[●•\-\u2013\*]\s*/, ''))
+            } else if (isDateUrl) {
+                doc.fillColor(C.muted).fontSize(9).font('Helvetica-Oblique').text(line)
+                doc.moveDown(0.1)
+            } else {
+                // Project name — split bold part from pipe/dash
+                const pipeIdx = line.indexOf('|')
+                const dashIdx = line.indexOf(' \u2014 ')
+                const splitAt = dashIdx > 0 ? dashIdx : (pipeIdx > 0 ? pipeIdx : -1)
+                if (splitAt > 0) {
+                    doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold')
+                       .text(line.slice(0, splitAt).trim(), { continued: true })
+                    doc.fillColor(C.muted).font('Helvetica')
+                       .text(' ' + line.slice(splitAt).trim())
+                } else {
+                    doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
+                }
+            }
+        })
+        doc.moveDown(0.6)
+    }
+
+    // ── EDUCATION
+    if (sections.education && sections.education.length > 0) {
+        secHeader('EDUCATION')
+        sections.education.forEach(line => {
+            const isDetail = line.includes('|') && /20\d\d|19\d\d/.test(line)
+            if (isDetail) {
+                doc.fillColor(C.muted).fontSize(9).font('Helvetica').text(line)
+            } else {
+                doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
+            }
+        })
+        doc.moveDown(0.6)
+    }
+
+    // ── CERTIFICATIONS
+    if (sections.certifications && sections.certifications.length > 0) {
+        secHeader('CERTIFICATIONS')
+        sections.certifications.forEach(line => {
+            doc.fillColor(C.text).fontSize(9.5).font('Helvetica')
+               .text('\u2022  ' + line, { lineGap: 2 })
+        })
+        doc.moveDown(0.5)
+    }
+
+    // ── ACHIEVEMENTS (if present)
+    if (sections.achievements && sections.achievements.length > 0) {
+        secHeader('ACHIEVEMENTS')
+        sections.achievements.forEach(line => {
+            doc.fillColor(C.text).fontSize(9.5).font('Helvetica').text('\u2022  ' + line, { lineGap: 2 })
+        })
+    }
+}
+
+// ─── MAIN PDF GENERATOR ───────────────────────────────────────────────────────
+function generatePdfFromData({ resumeText, fallbackText }) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ margin: 50, size: 'A4', autoFirstPage: true })
+        const buffers = []
+        doc.on('data', chunk => buffers.push(chunk))
+        doc.on('end', () => resolve(Buffer.concat(buffers)))
+        doc.on('error', reject)
+
+        // Try to parse full resume text first
+        const parsed = (resumeText && resumeText.length > 150) ? parseResumeText(resumeText) : null
+
+        if (parsed && parsed.name) {
+            renderResumePdf(doc, parsed)
+        } else {
+            // Fallback: simple plain layout for brief self-descriptions
+            doc.fontSize(20).fillColor('#0f172a').font('Helvetica-Bold')
+               .text('Professional Resume', { align: 'center' })
+            doc.moveDown(0.5)
+            doc.fontSize(10).fillColor('#1e293b').font('Helvetica')
+               .text(fallbackText || 'Resume content not available.', { lineGap: 3 })
+        }
 
         doc.end()
     })
 }
 
-
-async function generateResumePdf({ resume, selfDescription, jobDescription }, interviewReport) {
+async function generateResumePdf({ resume, selfDescription }, _interviewReport) {
+    // Use the full stored resume text; fall back to selfDescription
     const pdfBuffer = await generatePdfFromData({
-        report: interviewReport,
-        selfDescription: selfDescription || resume || ""
+        resumeText: resume || '',
+        fallbackText: selfDescription || resume || ''
     })
     return pdfBuffer
 }
