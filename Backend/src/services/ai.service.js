@@ -42,27 +42,56 @@ ${schemaStr}
 
 Return ONLY valid JSON. Do not return any markdown formatting or extra text.`;
 
+    // Truncate to avoid blowing up the token limits (Groq 70b has 6k TPM free limit)
+    const safeResume = resume.slice(0, 8000);
+    const safeSelfDesc = selfDescription.slice(0, 3000);
+    const safeJD = jobDescription.slice(0, 6000);
+
     const userPrompt = `Generate an interview report for a candidate with the following details:
-Resume: ${resume}
-Self Description: ${selfDescription}
-Job Description: ${jobDescription}`;
+Resume: ${safeResume}
+Self Description: ${safeSelfDesc}
+Job Description: ${safeJD}`;
 
-    try {
-        const response = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userPrompt }
-            ],
-            model: "llama-3.3-70b-versatile",
-            temperature: 0.5,
-            response_format: { type: "json_object" }
-        });
+    // Fallback chain: start with highest quality, fall back to highest rate-limit models
+    const modelsToTry = [
+        "llama-3.3-70b-versatile", // 6k TPM limit
+        "llama3-8b-8192",          // 30k TPM limit
+        "mixtral-8x7b-32768"       // 18k TPM limit
+    ];
 
-        return JSON.parse(response.choices[0].message.content);
-    } catch (err) {
-        console.error("[AI Gen] Groq request failed:", err.message);
-        throw err;
+    let lastError = null;
+
+    for (const modelName of modelsToTry) {
+        try {
+            const response = await groq.chat.completions.create({
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt }
+                ],
+                model: modelName,
+                temperature: 0.5,
+                response_format: { type: "json_object" }
+            });
+
+            return JSON.parse(response.choices[0].message.content);
+        } catch (err) {
+            console.error(`[AI Gen] Model ${modelName} failed:`, err.status || err.message);
+            lastError = err;
+            // If it's a 429 Rate Limit or 503, wait 2 seconds then try the next model
+            if (err.status === 429 || err.status === 503) {
+                await new Promise(res => setTimeout(res, 2000));
+                continue;
+            }
+            // For other errors, break and throw immediately
+            break;
+        }
     }
+
+    // If all models failed, throw a clean error message that the frontend can parse
+    const errorMessage = lastError?.status === 429 
+        ? "AI rate limit exceeded for this API key. Please try again in 1 minute." 
+        : (lastError?.message || "AI Generation Failed");
+    throw new Error(errorMessage);
 }
 
 

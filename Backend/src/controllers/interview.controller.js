@@ -23,24 +23,31 @@ async function generateInterViewReportController(req, res) {
         return res.status(400).json({ message: "Please provide a resume PDF or a self description." })
     }
 
-    const interViewReportByAi = await generateInterviewReport({
-        resume: resumeText,
-        selfDescription: selfDescription || "",
-        jobDescription
-    })
+    try {
+        const interViewReportByAi = await generateInterviewReport({
+            resume: resumeText,
+            selfDescription: selfDescription || "",
+            jobDescription
+        })
 
-    const interviewReport = await interviewReportModel.create({
-        user: req.user.id,
-        resume: resumeText,
-        selfDescription: selfDescription || "",
-        jobDescription,
-        ...interViewReportByAi
-    })
+        const interviewReport = await interviewReportModel.create({
+            user: req.user.id,
+            resume: resumeText,
+            selfDescription: selfDescription || "",
+            jobDescription,
+            ...interViewReportByAi
+        })
 
-    res.status(201).json({
-        message: "Interview report generated successfully.",
-        interviewReport
-    })
+        res.status(201).json({
+            message: "Interview report generated successfully.",
+            interviewReport
+        })
+    } catch (error) {
+        console.error("Controller Error:", error.message);
+        res.status(500).json({ 
+            message: error.message || "Failed to generate interview report" 
+        });
+    }
 
 }
 
