@@ -133,6 +133,21 @@ function parseResumeText(rawText) {
             currentKey = SECTION_MAP[matched]
             if (!sections[currentKey]) sections[currentKey] = []
         } else if (currentKey) {
+            // Re-assemble fragmented lines broken by pdf-parse
+            if (sections[currentKey].length > 0) {
+                const prevLine = sections[currentKey][sections[currentKey].length - 1]
+                const isBullet = /^[●•\-\u2013\*]/.test(line)
+                const hasDate = /20\d\d|19\d\d/.test(line)
+                const hasPipe = line.includes('|')
+                const isShortFragment = line.length > 0 && line.length < 80
+                
+                // If it's not a new bullet, has no date/pipe, and the previous line didn't end a sentence
+                if (!isBullet && !hasDate && !hasPipe && !prevLine.endsWith('.') && prevLine.length > 30) {
+                    // It's a continuation of the previous bullet/sentence
+                    sections[currentKey][sections[currentKey].length - 1] += ' ' + line
+                    continue
+                }
+            }
             sections[currentKey].push(line)
         }
     }
@@ -181,6 +196,20 @@ function renderResumePdf(doc, { name, contact, sections }) {
 
     // ── Right-aligned Date helper
     const splitLeftRight = (fullLine) => {
+        // Regex looks for typical date structures at the end of the line: e.g. "Jan 2025 - Aug 2025" or "2024 - 2026" or "Aug 2025"
+        // It accounts for OCR corruption before the date like `" ul. ` or `" Ö y `
+        const dateMatch = fullLine.match(/(\s*(?:\||["”’]\s*(?:[a-zA-Z\.öÖ]*\s*y?)?)\s*)(((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z\.,]*\s*)?\d{4}\s*[-–—]\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z\.,]*\s*)?(?:\d{4}|Present|Current))\s*$/i)
+        
+        if (dateMatch) {
+            const left = fullLine.slice(0, dateMatch.index).trim()
+            const right = dateMatch[2].trim()
+            const y = doc.y
+            doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(left, 50, y, { continued: false })
+            doc.fillColor(C.muted).fontSize(10).font('Helvetica').text(right, 50, y, { align: 'right' })
+            return true
+        }
+
+        // Fallback to basic pipe splitting
         const pipeIdx = fullLine.lastIndexOf('|')
         if (pipeIdx > 0 && /20\d\d|19\d\d/.test(fullLine.slice(pipeIdx))) {
             const left = fullLine.slice(0, pipeIdx).trim()
