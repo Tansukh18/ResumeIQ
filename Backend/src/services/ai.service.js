@@ -149,13 +149,13 @@ function renderResumePdf(doc, { name, contact, sections }) {
     const PW = 495 // page content width (595 - 50*2 margins)
 
     // ── NAME
-    doc.fontSize(22).fillColor(C.name).font('Helvetica-Bold')
+    doc.fontSize(24).fillColor(C.name).font('Helvetica-Bold')
        .text(name, { align: 'center' })
 
     // ── CONTACT
     if (contact) {
         doc.moveDown(0.2)
-        doc.fontSize(9.5).fillColor(C.muted).font('Helvetica')
+        doc.fontSize(10).fillColor(C.muted).font('Helvetica')
            .text(contact, { align: 'center' })
     }
 
@@ -165,25 +165,41 @@ function renderResumePdf(doc, { name, contact, sections }) {
 
     // ── Section header helper
     const secHeader = (title) => {
-        doc.fillColor(C.accent).fontSize(11).font('Helvetica-Bold').text(title)
-        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(C.line).lineWidth(0.7).stroke()
-        doc.moveDown(0.35)
+        doc.moveDown(0.2)
+        doc.fillColor(C.accent).fontSize(12).font('Helvetica-Bold').text(title)
+        doc.moveDown(0.1)
+        doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(C.line).lineWidth(1).stroke()
+        doc.moveDown(0.4)
     }
 
     // ── Bullet helper — single text run so ATS scanners read it cleanly
     const bullet = (text) => {
-        doc.fillColor(C.text).fontSize(9.5).font('Helvetica')
-           .text('\u2022  ' + text, { lineGap: 1.5, align: 'justify', indent: 14 })
+        doc.fillColor(C.text).fontSize(10).font('Helvetica')
+           .text('\u2022  ' + text, { lineGap: 2, align: 'justify', indent: 14 })
         doc.moveDown(0.1)
+    }
+
+    // ── Right-aligned Date helper
+    const splitLeftRight = (fullLine) => {
+        const pipeIdx = fullLine.lastIndexOf('|')
+        if (pipeIdx > 0 && /20\d\d|19\d\d/.test(fullLine.slice(pipeIdx))) {
+            const left = fullLine.slice(0, pipeIdx).trim()
+            const right = fullLine.slice(pipeIdx + 1).trim()
+            const y = doc.y
+            doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(left, 50, y, { continued: false })
+            doc.fillColor(C.muted).fontSize(10).font('Helvetica').text(right, 50, y, { align: 'right' })
+            return true
+        }
+        return false
     }
 
     // ── PROFESSIONAL SUMMARY
     if (sections.summary && sections.summary.length > 0) {
         secHeader('PROFESSIONAL SUMMARY')
         const para = sections.summary.join(' ').replace(/\s+/g, ' ').trim()
-        doc.fillColor(C.text).fontSize(9.5).font('Helvetica')
-           .text(para, { lineGap: 2, align: 'justify' })
-        doc.moveDown(0.7)
+        doc.fillColor(C.text).fontSize(10).font('Helvetica')
+           .text(para, { lineGap: 3, align: 'justify' })
+        doc.moveDown(0.5)
     }
 
     // ── KEY SKILLS
@@ -194,16 +210,15 @@ function renderResumePdf(doc, { name, contact, sections }) {
             if (colonIdx > 0) {
                 const cat = line.slice(0, colonIdx).trim()
                 const vals = line.slice(colonIdx + 1).replace(/^\t+/, '').trim()
-                // Render as single line: bold category then normal values
-                doc.fillColor(C.text).fontSize(9.5).font('Helvetica-Bold')
+                doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold')
                    .text(cat + ':  ', { continued: true })
-                doc.font('Helvetica').text(vals, { lineGap: 1 })
+                doc.font('Helvetica').text(vals, { lineGap: 2 })
             } else {
-                doc.fillColor(C.text).fontSize(9.5).font('Helvetica').text(line, { lineGap: 1 })
+                doc.fillColor(C.text).fontSize(10).font('Helvetica').text(line, { lineGap: 2 })
             }
-            doc.moveDown(0.12)
+            doc.moveDown(0.1)
         })
-        doc.moveDown(0.5)
+        doc.moveDown(0.4)
     }
 
     // ── PROFESSIONAL EXPERIENCE
@@ -211,17 +226,17 @@ function renderResumePdf(doc, { name, contact, sections }) {
         secHeader('PROFESSIONAL EXPERIENCE')
         sections.experience.forEach(line => {
             const isBullet = /^[●•\-\u2013\*]/.test(line)
-            const isCompanyDate = line.includes('|') && /20\d\d|19\d\d/.test(line)
             if (isBullet) {
                 bullet(line.replace(/^[●•\-\u2013\*]\s*/, ''))
-            } else if (isCompanyDate) {
-                doc.fillColor(C.muted).fontSize(9).font('Helvetica').text(line)
-                doc.moveDown(0.2)
+            } else if (line.includes('|')) {
+                if (!splitLeftRight(line)) {
+                    doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
+                }
             } else {
                 doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
             }
         })
-        doc.moveDown(0.6)
+        doc.moveDown(0.4)
     }
 
     // ── PROJECTS
@@ -229,59 +244,49 @@ function renderResumePdf(doc, { name, contact, sections }) {
         secHeader('PROJECTS')
         sections.projects.forEach(line => {
             const isBullet = /^[●•\-\u2013\*]/.test(line)
-            const isDateUrl = /20\d\d|19\d\d/.test(line) && (line.includes('|') || line.includes('.'))
             if (isBullet) {
                 bullet(line.replace(/^[●•\-\u2013\*]\s*/, ''))
-            } else if (isDateUrl) {
-                doc.fillColor(C.muted).fontSize(9).font('Helvetica-Oblique').text(line)
-                doc.moveDown(0.1)
-            } else {
-                // Project name — split bold part from pipe/dash
-                const pipeIdx = line.indexOf('|')
-                const dashIdx = line.indexOf(' \u2014 ')
-                const splitAt = dashIdx > 0 ? dashIdx : (pipeIdx > 0 ? pipeIdx : -1)
-                if (splitAt > 0) {
-                    doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold')
-                       .text(line.slice(0, splitAt).trim(), { continued: true })
-                    doc.fillColor(C.muted).font('Helvetica')
-                       .text(' ' + line.slice(splitAt).trim())
-                } else {
+            } else if (line.includes('|')) {
+                if (!splitLeftRight(line)) {
                     doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
                 }
+            } else {
+                doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
             }
         })
-        doc.moveDown(0.6)
+        doc.moveDown(0.4)
     }
 
     // ── EDUCATION
     if (sections.education && sections.education.length > 0) {
         secHeader('EDUCATION')
         sections.education.forEach(line => {
-            const isDetail = line.includes('|') && /20\d\d|19\d\d/.test(line)
-            if (isDetail) {
-                doc.fillColor(C.muted).fontSize(9).font('Helvetica').text(line)
+            if (line.includes('|')) {
+                if (!splitLeftRight(line)) {
+                    doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
+                }
             } else {
                 doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold').text(line)
             }
         })
-        doc.moveDown(0.6)
+        doc.moveDown(0.4)
     }
 
     // ── CERTIFICATIONS
     if (sections.certifications && sections.certifications.length > 0) {
         secHeader('CERTIFICATIONS')
         sections.certifications.forEach(line => {
-            doc.fillColor(C.text).fontSize(9.5).font('Helvetica')
+            doc.fillColor(C.text).fontSize(10).font('Helvetica')
                .text('\u2022  ' + line, { lineGap: 2 })
         })
-        doc.moveDown(0.5)
+        doc.moveDown(0.4)
     }
 
     // ── ACHIEVEMENTS (if present)
     if (sections.achievements && sections.achievements.length > 0) {
         secHeader('ACHIEVEMENTS')
         sections.achievements.forEach(line => {
-            doc.fillColor(C.text).fontSize(9.5).font('Helvetica').text('\u2022  ' + line, { lineGap: 2 })
+            doc.fillColor(C.text).fontSize(10).font('Helvetica').text('\u2022  ' + line, { lineGap: 2 })
         })
     }
 }
